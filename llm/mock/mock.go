@@ -26,10 +26,10 @@ func TextTurn(text string) Turn {
 
 // Provider replays one Turn per Stream call, in order, and records requests.
 type Provider struct {
-	mu     sync.Mutex
-	Turns  []Turn
-	next   int
-	reqs   []llm.Request
+	mu    sync.Mutex
+	Turns []Turn
+	next  int
+	reqs  []llm.Request
 }
 
 // New builds a mock Provider from an ordered list of Turns.
@@ -50,7 +50,7 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Even
 	turn := p.Turns[p.next]
 	p.next++
 
-	ch := make(chan llm.Event)
+	ch := make(chan llm.Event, len(turn.Events))
 	go func() {
 		defer close(ch)
 		for _, e := range turn.Events {
