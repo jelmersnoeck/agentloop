@@ -2,6 +2,7 @@ package agentloop
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -53,4 +54,45 @@ func TestNewRequiresProvider(t *testing.T) {
 	if _, err := New(); err == nil {
 		t.Fatal("expected error when no provider configured")
 	}
+}
+
+// TestAgentEmitsProviderErrorOnce guards against a mid-stream provider error
+// being surfaced twice: once when runTurn forwards the raw event via emit,
+// and again if runTurn also returns it as an error for Run to re-emit.
+func TestAgentEmitsProviderErrorOnce(t *testing.T) {
+	sentinel := errors.New("provider boom")
+	p := mock.New(mock.Turn{Events: []llm.Event{
+		{Type: llm.EventError, Err: sentinel},
+	}})
+	a, err := New(WithProvider(p), WithModel("test-model"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	go func() { _ = a.Run(ctx) }()
+
+	a.Commands() <- Send{Text: "go"}
+
+	var errCount int
+	timeout := time.After(200 * time.Millisecond)
+collect:
+	for {
+		select {
+		case e := <-a.Events():
+			if e.Type == llm.EventError && e.Err != nil {
+				errCount++
+			}
+		case <-timeout:
+			break collect
+		}
+	}
+
+	if errCount != 1 {
+		t.Fatalf("got %d EventError events, want exactly 1", errCount)
+	}
+
+	a.Commands() <- Stop{}
 }

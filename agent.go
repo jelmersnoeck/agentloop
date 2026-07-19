@@ -55,7 +55,7 @@ func New(opts ...Option) (*Agent, error) {
 		opt(a)
 	}
 	if a.provider == nil {
-		return nil, errors.New("agentloop: no provider configured (use WithProvider or WithDefaultConfig)")
+		return nil, errors.New("agentloop: no provider configured (use WithProvider)")
 	}
 	return a, nil
 }
@@ -118,7 +118,15 @@ func (a *Agent) runTurn(ctx context.Context, text string) error {
 			assistantText += e.Text
 		case llm.EventError:
 			if e.Err != nil {
-				return e.Err
+				// The error was already forwarded to the consumer as an
+				// event above (a.emit(e)), so returning it here would cause
+				// Run to emit it a second time. Stop processing the turn
+				// without propagating it as a return error.
+				//
+				// Note: any assistantText accumulated so far is
+				// intentionally dropped rather than appended as a partial
+				// assistant message; that is a deferred concern.
+				return nil
 			}
 		}
 	}
