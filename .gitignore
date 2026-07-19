@@ -1,0 +1,13 @@
+# Go build artifacts
+*.exe
+*.test
+*.out
+/bin/
+
+# Superpowers scratch (plans/specs are tracked under docs/; this is transient state)
+.superpowers/
+
+# Editor / OS cruft
+.DS_Store
+.idea/
+.vscode/
