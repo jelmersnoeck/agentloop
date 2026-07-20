@@ -1,6 +1,7 @@
 package truncate
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -78,5 +79,77 @@ func TestTailByteCutIsRuneSafe(t *testing.T) {
 	}
 	if out != "世世" {
 		t.Fatalf("Tail = %q, want 世世 (partial rune dropped)", out)
+	}
+}
+
+func TestLineCap(t *testing.T) {
+	long := strings.Repeat("y", 600)
+	in := "ok\n" + long + "\n"
+	out := Line(in, 500)
+	firstKept := strings.Split(out, "\n")[0]
+	if firstKept != "ok" {
+		t.Fatalf("short line changed: %q", firstKept)
+	}
+	if !strings.Contains(out, "... [truncated]") {
+		t.Fatal("expected per-line truncation marker")
+	}
+	// The long line must be capped near 500 chars plus the marker.
+	longKept := strings.Split(out, "\n")[1]
+	if len(longKept) > 500+len("... [truncated]") {
+		t.Fatalf("long line not capped: len=%d", len(longKept))
+	}
+}
+
+func TestSpillWritesFile(t *testing.T) {
+	path, err := Spill("agentloop-test", "full content here")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "full content here" {
+		t.Fatalf("spilled content = %q", string(data))
+	}
+}
+
+func TestApplyTruncatesAndSpills(t *testing.T) {
+	// 3000 lines exceeds DefaultMaxLines (2000) → truncated + spilled.
+	var b strings.Builder
+	for i := 0; i < 3000; i++ {
+		b.WriteString("line\n")
+	}
+	out, err := Apply(b.String(), false) // keepTail=false → Head
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Full output:") {
+		t.Fatalf("expected spill marker, got tail: %q", out[len(out)-80:])
+	}
+	// Extract the path and confirm the full content was written.
+	marker := out[strings.Index(out, "Full output:")+len("Full output:"):]
+	path := strings.TrimSpace(strings.Trim(marker, "]"))
+	defer os.Remove(path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("spill file unreadable at %q: %v", path, err)
+	}
+	if strings.Count(string(data), "line") != 3000 {
+		t.Fatalf("spill file missing lines: %d", strings.Count(string(data), "line"))
+	}
+}
+
+func TestApplyNoTruncationNoSpill(t *testing.T) {
+	out, err := Apply("small output\n", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "Full output:") {
+		t.Fatalf("small output should not spill: %q", out)
+	}
+	if out != "small output\n" {
+		t.Fatalf("small output altered: %q", out)
 	}
 }

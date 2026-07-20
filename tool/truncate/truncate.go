@@ -5,6 +5,8 @@
 package truncate
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"unicode/utf8"
 )
@@ -87,4 +89,52 @@ func trimLeadingPartialRune(s string) string {
 		break
 	}
 	return s
+}
+
+// Line caps each line of s at maxChars runes, appending a marker to any line it
+// shortens. Neither end of the output is dropped — only over-long lines shrink.
+func Line(s string, maxChars int) string {
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		if len(ln) > maxChars {
+			lines[i] = ln[:maxChars] + "... [truncated]"
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// Spill writes content to a new temp file and returns its path. The caller is
+// responsible for the file's lifetime.
+func Spill(prefix, content string) (string, error) {
+	f, err := os.CreateTemp("", prefix+"-*.txt")
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	if _, err := f.WriteString(content); err != nil {
+		return "", err
+	}
+	return f.Name(), nil
+}
+
+// Apply caps content with the default line/byte limits — Tail when keepTail is
+// true (shell output), Head otherwise (file reads). If content was truncated it
+// spills the full content to a temp file and appends a marker pointing at it, so
+// the model can re-read or grep the complete output.
+func Apply(content string, keepTail bool) (string, error) {
+	var out string
+	var truncated bool
+	if keepTail {
+		out, truncated = Tail(content, DefaultMaxLines, DefaultMaxBytes)
+	} else {
+		out, truncated = Head(content, DefaultMaxLines, DefaultMaxBytes)
+	}
+	if !truncated {
+		return out, nil
+	}
+	path, err := Spill("agentloop", content)
+	if err != nil {
+		return out, err
+	}
+	return fmt.Sprintf("%s\n[Output truncated. Full output: %s]", out, path), nil
 }
