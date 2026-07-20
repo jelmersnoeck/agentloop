@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+
+	"github.com/jelmersnoeck/agentloop/llm"
 )
 
 func namedTool(name string) Tool { return fixedTool{name: name} }
@@ -41,5 +43,64 @@ func TestRegistryAllSorted(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("All() order = %v, want %v", got, want)
 		}
+	}
+}
+
+func TestRegistrySchemasSorted(t *testing.T) {
+	r := NewRegistry()
+	r.Register(namedTool("write"))
+	r.Register(namedTool("read"))
+	schemas := r.Schemas()
+	if len(schemas) != 2 || schemas[0].Name != "read" || schemas[1].Name != "write" {
+		t.Fatalf("Schemas() = %+v, want sorted [read write]", schemas)
+	}
+	if schemas[0].Description != "desc of read" {
+		t.Fatalf("schema description = %q", schemas[0].Description)
+	}
+}
+
+func TestRegistryExecute(t *testing.T) {
+	r := NewRegistry()
+	r.Register(namedTool("read"))
+	res, err := r.Execute(context.Background(), "read", nil, Context{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res.Content[0].(llm.TextBlock).Text; got != "ran read" {
+		t.Fatalf("Execute result = %q, want %q", got, "ran read")
+	}
+	if _, err := r.Execute(context.Background(), "nope", nil, Context{}); err == nil {
+		t.Fatal("expected error for unknown tool")
+	}
+}
+
+func TestRegistryFiltered(t *testing.T) {
+	r := NewRegistry()
+	r.Register(namedTool("read"))
+	r.Register(namedTool("write"))
+	r.Register(namedTool("bash"))
+
+	// allow-list only
+	allow := r.Filtered([]string{"read", "write"}, nil)
+	if len(allow.All()) != 2 {
+		t.Fatalf("allow-list size = %d, want 2", len(allow.All()))
+	}
+	if _, ok := allow.Get("bash"); ok {
+		t.Fatal("bash should be excluded by allow-list")
+	}
+
+	// deny wins over allow
+	both := r.Filtered([]string{"read", "write"}, []string{"write"})
+	if _, ok := both.Get("write"); ok {
+		t.Fatal("write should be denied")
+	}
+	if _, ok := both.Get("read"); !ok {
+		t.Fatal("read should remain")
+	}
+
+	// empty allow = all (minus deny)
+	denyOnly := r.Filtered(nil, []string{"bash"})
+	if len(denyOnly.All()) != 2 {
+		t.Fatalf("deny-only size = %d, want 2", len(denyOnly.All()))
 	}
 }
