@@ -91,13 +91,15 @@ func trimLeadingPartialRune(s string) string {
 	return s
 }
 
-// Line caps each line of s at maxChars runes, appending a marker to any line it
-// shortens. Neither end of the output is dropped — only over-long lines shrink.
+// Line caps each line of s at most maxChars bytes, trimmed back to a
+// whole-rune boundary so the output stays valid UTF-8. It appends a marker to
+// any line it shortens. Neither end of the output is dropped — only over-long
+// lines shrink.
 func Line(s string, maxChars int) string {
 	lines := strings.Split(s, "\n")
 	for i, ln := range lines {
 		if len(ln) > maxChars {
-			lines[i] = ln[:maxChars] + "... [truncated]"
+			lines[i] = trimTrailingPartialRune(ln[:maxChars]) + "... [truncated]"
 		}
 	}
 	return strings.Join(lines, "\n")

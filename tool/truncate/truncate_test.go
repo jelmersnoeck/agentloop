@@ -153,3 +153,15 @@ func TestApplyNoTruncationNoSpill(t *testing.T) {
 		t.Fatalf("small output altered: %q", out)
 	}
 }
+
+func TestLineCapIsRuneSafe(t *testing.T) {
+	line := strings.Repeat("世", 10) // 3 bytes each, 30 bytes
+	out := Line(line+"\n", 8)       // cap at 8 bytes = 2 full runes + 2 partial bytes
+	first := strings.Split(out, "\n")[0]
+	if !utf8.ValidString(first) {
+		t.Fatalf("Line produced invalid UTF-8: %q", first)
+	}
+	if first != "世世... [truncated]" {
+		t.Fatalf("Line = %q, want %q", first, "世世... [truncated]")
+	}
+}
