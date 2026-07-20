@@ -9,7 +9,7 @@ that every agent otherwise re-implements. It is designed to be a solid base you 
 different agents on top of.
 
 > **Status: early development.** The foundation (Plan 1 of 5) has landed: the `llm` contracts
-> package, a scriptable mock provider, and a minimal command-in/event-out loop. Real
+> package, a scriptable mock provider, and a minimal blocking `Run` loop. Real
 > providers, tools, sub-agents, and caching are being built in subsequent milestones — see
 > [Roadmap](#roadmap). APIs will change until a tagged release.
 
@@ -37,6 +37,7 @@ own worldview; `agentloop` sits one layer above them and stays neutral.
 ```go
 import (
     "context"
+    "fmt"
 
     "github.com/jelmersnoeck/agentloop"
     "github.com/jelmersnoeck/agentloop/llm"
@@ -47,26 +48,30 @@ import (
 // whole loop with zero network. Real providers (Anthropic, OpenAI) are on the roadmap.
 provider := mock.New(mock.TextTurn("hello from the loop"))
 
-agent, err := agentloop.New(
+// Run blocks, streams every event to the callback, and returns the final result.
+res, err := agentloop.Run(context.Background(), "say hi",
     agentloop.WithProvider(provider),
     agentloop.WithModel("mock-model"),
+    agentloop.WithOnEvent(func(e llm.Event) {
+        if e.Type == llm.EventText {
+            fmt.Print(e.Text)
+        }
+    }),
 )
 if err != nil {
     panic(err)
 }
+fmt.Println(res.FinalText)
+```
 
-go agent.Run(context.Background())
+Need a handle for async steering? Construct an `Agent` and call `Run` on it — then
+`agent.Steer("...")` / `agent.Follow("...")` from any goroutine inject messages the loop picks
+up at its next checkpoint:
 
-agent.Commands() <- agentloop.Send{Text: "hi"}
-for e := range agent.Events() {
-    if e.Type == llm.EventText {
-        print(e.Text)
-    }
-    if e.Type == llm.EventMessageStop {
-        break
-    }
-}
-agent.Commands() <- agentloop.Stop{}
+```go
+agent, _ := agentloop.New(agentloop.WithProvider(provider))
+go watchForInput(agent) // calls agent.Steer(...) whenever
+res, err := agent.Run(ctx, "start the task", onEvent)
 ```
 
 The intended zero-config entry point — `agentloop.New(agentloop.WithDefaultConfig())`, which
@@ -106,7 +111,7 @@ The SDK is built bottom-up as a sequence of independently-shippable milestones:
 
 ## Development
 
-Requires Go 1.24+.
+Requires Go 1.26+.
 
 ```bash
 go test ./...        # run the suite

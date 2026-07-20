@@ -3,7 +3,7 @@
 **Date:** 2026-07-19
 **Status:** Approved for planning (user waived the review gate)
 **Module:** `github.com/jelmersnoeck/agentloop`
-**Language:** Go 1.24+
+**Language:** Go 1.26+
 
 ---
 
@@ -208,67 +208,83 @@ Defaults bundled by `WithDefaultConfig`: `tool.Defaults()`, `WithAgentsMD()`,
 
 ## 5. The Run Loop
 
-The loop is an actor: **commands in, events out.** External code never touches loop internals.
-This one primitive yields streaming, queued messages, steering, and observable sub-agents from
-the same machinery.
+`Run` is a **blocking call that streams events to a callback**, the idiomatic Go shape for a
+continuous loop (cf. `filepath.WalkDir`, `bufio.Scanner`). Output flows out through the
+`EventFunc`; asynchronous input (steering, follow-ups) flows in through thread-safe methods.
+This separation keeps the common case a one-liner while still supporting mid-run injection.
 
 ```go
-type Command interface{ isCommand() }
-type Send   struct{ Text string } // start/continue a turn with a user message
-type Steer  struct{ Text string } // inject guidance mid-run (high priority)
-type Follow struct{ Text string } // queue a sequential next message
-type Stop   struct{}              // graceful cancel; returns partial results
+// Output: a blocking Run that streams events and returns the final result.
+type EventFunc func(llm.Event)
+type Result   struct{ FinalText string; Messages []llm.Message }
 
-func (a *Agent) Commands() chan<- Command
-func (a *Agent) Events()   <-chan llm.Event
+func (a *Agent) Run(ctx context.Context, task string, onEvent EventFunc) (Result, error)
+
+// Async input: thread-safe, callable from any goroutine, drained at checkpoints.
+func (a *Agent) Steer(text string)  // high-priority, injected ahead of follow-ups
+func (a *Agent) Follow(text string) // sequential follow-up
+
+// One-shot package-level convenience (onEvent supplied via WithOnEvent):
+func Run(ctx context.Context, task string, opts ...Option) (Result, error)
 ```
+
+`Run` ends when the assistant produces no tool calls and no messages remain queued, or when
+`ctx` is cancelled — there is no `Stop` sentinel and no channel to close. Sub-agent events
+bubble up by the parent forwarding them onto the parent's `onEvent` (see §7).
 
 ### One iteration
 
 ```
-for {
-    if ctx cancelled → emit(interrupted); return partial
-
-    // DRAIN CHECKPOINT (turn boundary)
-    drain steeringQueue  → append as user messages      // urgent, always first
-    drain followUpQueue  → append per QueueMode           // default one-at-a-time
+Run(ctx, task, onEvent):
+  append task as a user message
+  for {
+    if ctx cancelled → return (result, ctx.Err())
 
     // CONVERGENCE CHECK
-    if policy.ShouldConverge(state) → inject directive / stop
+    if policy.ShouldConverge(state) → inject directive / finish
 
     // ASSEMBLE + CALL
     ctx.Transform()                          // pluggable compaction hook (default no-op)
     req  := assemble(system, history, tools, model, reasoning, cache)   // cache-friendly, §9
     ch   := retry(provider.Stream(ctx, req))
-    msg  := collectAssistantMessage(ch, emit)  // state machine over Event deltas → Events()
+    msg  := collectAssistantMessage(ch, onEvent)  // forwards every Event delta to onEvent
 
     history = append(history, msg)
 
-    // STOP CONDITION: no tool_use blocks = done
+    // EXECUTE TOOLS (if any)
     calls := msg.ToolUseBlocks()
-    if len(calls) == 0 {
-        d := hooks.AfterTurn(ctx, &msg)       // Continue | Inject(text) | Finish
-        if d.Finish { emit(done); return }
+    if len(calls) > 0 {
+        for each call:
+            hooks.BeforeToolCall → execute → hooks.AfterToolCall
+            // read-only tools fan out concurrently; mutating tools run sequentially
+            // AFTER each call: mini-drain steering queue   ← fine-grained steering
+        history = append(history, toolResults)    // as a user message
         continue
     }
 
-    // EXECUTE TOOLS
-    for each call:
-        hooks.BeforeToolCall → execute → hooks.AfterToolCall
-        // read-only tools fan out concurrently; mutating tools run sequentially
-        // AFTER each call: mini-drain steeringQueue   ← fine-grained steering
-    history = append(history, toolResults)    // as a user message
-}
+    // TURN BOUNDARY: no tool calls → run hooks, then drain queued input
+    d := hooks.AfterTurn(ctx, &msg)          // Continue | Inject(text) | Finish
+    if d.Finish → return (result, nil)
+    if next := drain(steeringQueue, then followUpQueue); next != "" {
+        append next as a user message; continue
+    }
+    return (result, nil)                      // converged: no tools, nothing queued
+  }
 ```
 
 ### Steering vs follow-up queues
 
-Two queues, two drain checkpoints = your two steering granularities:
+`Steer()` and `Follow()` enqueue onto two internal queues, drained at two checkpoints = the two
+steering granularities:
 
-- **`steeringQueue`** drained **after every tool call** (fine) *and* at the turn boundary
+- **steering queue** drained **after every tool call** (fine) *and* at the turn boundary
   (coarse). For "no, not that file" mid-run injection.
-- **`followUpQueue`** drained at the turn boundary. `QueueMode` = `AllAtOnce` | `OneAtATime`;
-  **default `OneAtATime`** (each follow-up gets a fresh turn).
+- **follow-up queue** drained at the turn boundary, steering first. `QueueMode` =
+  `AllAtOnce` | `OneAtATime`; **default `OneAtATime`** (each follow-up gets a fresh turn).
+
+Because the methods are thread-safe, a UI or another goroutine calls `agent.Steer(...)` at any
+moment; the loop picks it up at the next safe point. The common (no-steering) path never
+touches them.
 
 ### Hooks / interceptors
 
@@ -305,8 +321,10 @@ type ConvergencePolicy interface {
 
 ### Cancellation
 
-`Stop` is graceful: it cancels the `context.Context`; `collectAssistantMessage` returns
-whatever streamed so far. The transcript is never lost to a cancel.
+Cancellation is the caller's `context.Context`: cancel it and `Run` returns the partial
+`Result` (the transcript so far) plus `ctx.Err()`. There is no separate `Stop` — the context
+*is* the stop signal, and `Run` returning is the completion signal. The transcript is never
+lost to a cancel.
 
 ---
 
@@ -615,7 +633,8 @@ with tests driven by the mock provider.
 **In:**
 - `llm` contracts (Context, blocks incl. thinking+signature, Provider, Event, Reasoning, Usage).
 - Anthropic + OpenAI providers.
-- The command-in/event-out loop with steering + follow-up queues, hooks, convergence.
+- The blocking `Run` loop (callback output, `Steer`/`Follow` methods) with steering + follow-up
+  queues, hooks, convergence.
 - `tool` (interface, `FromFunc`, registry, concurrency) + 6 built-ins + direction-aware truncation.
 - `subagent` (observable spawner, scoped registries, `agent` tool) + `agentgroup` (one-shot).
 - `agentsmd` instruction loading (AGENTS.md → CLAUDE.md fallback, hierarchy, static/dynamic split).

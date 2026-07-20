@@ -5,13 +5,13 @@ Guidance for agents and contributors working in this repository. (`agentloop` it
 
 ## What this is
 
-`agentloop` is a provider-agnostic Go SDK for building agents: a command-in/event-out loop over
-a pluggable LLM provider, plus tools, sub-agents, agent groups, `AGENTS.md` config, and
-cross-provider caching. It is a reusable base for building many different agents, not an agent
-itself.
+`agentloop` is a provider-agnostic Go SDK for building agents: a blocking `Run` loop over a
+pluggable LLM provider that streams events to a callback (with `Steer`/`Follow` methods for
+async injection), plus tools, sub-agents, agent groups, `AGENTS.md` config, and cross-provider
+caching. It is a reusable base for building many different agents, not an agent itself.
 
 - **Module:** `github.com/jelmersnoeck/agentloop`
-- **Go version:** 1.24+
+- **Go version:** 1.26+
 - **Status:** early development; built as a 5-milestone sequence (see the roadmap in
   `README.md` and the plans under `docs/superpowers/plans/`).
 
@@ -34,8 +34,9 @@ change that adds an in-module import to `llm` should be rejected.
   provider; never strip it.
 - **Determinism for prompt caching.** Keep tool ordering stable (sorted), JSON serialization
   canonical, and volatile content (dates, live status) out of the cacheable prefix.
-- **Concurrency.** The loop, mock, and future sub-agents use goroutines/channels; run
-  `go test -race ./...` on anything touching them.
+- **Concurrency.** `Run` streams via a synchronous callback; async input (`Steer`/`Follow`)
+  is enqueued under a mutex. The mock provider and future sub-agents use goroutines/channels.
+  Run `go test -race ./...` on anything touching them.
 
 ## Design source of truth
 
@@ -57,7 +58,9 @@ gofmt -l .            # must print nothing
 
 ## Deferred items (tracked for later milestones)
 
-The minimal loop (milestone 1) intentionally defers to the milestone-2 loop rewrite: making
-`Agent.emit` context-aware, closing the `Events()` channel on run completion, and preserving
-partial assistant text on the error path. Don't treat these as bugs to fix in isolation — they
-are resolved structurally when the full loop (steering queues, hooks, cancellation) lands.
+The minimal loop (milestone 1) defers one item to the milestone-2 loop rewrite: preserving
+partial assistant text on the error path (today a mid-stream provider error returns without
+appending the partial assistant message). Don't fix it in isolation — it is resolved
+structurally when the full loop (tool execution, hooks, richer error handling) lands. (The
+earlier channel-blocking and channel-close concerns were removed by the switch to a blocking
+`Run` with a callback.)
