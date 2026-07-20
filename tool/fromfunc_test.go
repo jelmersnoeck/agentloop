@@ -1,9 +1,12 @@
 package tool
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 	"testing"
+
+	"github.com/jelmersnoeck/agentloop/llm"
 )
 
 type schemaArgs struct {
@@ -83,5 +86,54 @@ func assertProp(t *testing.T, raw json.RawMessage, wantType, wantDesc string) {
 	}
 	if p.Description != wantDesc {
 		t.Fatalf("description = %q, want %q", p.Description, wantDesc)
+	}
+}
+
+type echoArgs struct {
+	Message string `json:"message" jsonschema:"required,description=text to echo"`
+	Times   int    `json:"times"`
+}
+
+func TestFromFuncDispatch(t *testing.T) {
+	var seen echoArgs
+	tool := FromFunc("echo", "echoes a message",
+		func(ctx context.Context, a echoArgs, tctx Context) (Result, error) {
+			seen = a
+			return TextResult(a.Message), nil
+		})
+
+	if tool.Name() != "echo" || tool.Description() != "echoes a message" {
+		t.Fatalf("name/desc wrong: %q / %q", tool.Name(), tool.Description())
+	}
+	// Schema is generated from echoArgs.
+	if !json.Valid(tool.Schema()) {
+		t.Fatalf("schema not valid JSON: %s", tool.Schema())
+	}
+
+	res, err := tool.Execute(context.Background(),
+		json.RawMessage(`{"message":"hi","times":3}`), Context{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seen.Message != "hi" || seen.Times != 3 {
+		t.Fatalf("handler received %+v, want {hi 3}", seen)
+	}
+	if got := res.Content[0].(llm.TextBlock).Text; got != "hi" {
+		t.Fatalf("result = %q, want hi", got)
+	}
+}
+
+func TestFromFuncBadInputIsErrorResult(t *testing.T) {
+	tool := FromFunc("echo", "",
+		func(ctx context.Context, a echoArgs, tctx Context) (Result, error) {
+			return TextResult("should not run"), nil
+		})
+	res, err := tool.Execute(context.Background(),
+		json.RawMessage(`{"times": "not a number"}`), Context{})
+	if err != nil {
+		t.Fatalf("bad input should not be a Go error, got %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("bad input should yield an error Result the model can react to")
 	}
 }

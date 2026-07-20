@@ -1,7 +1,9 @@
 package tool
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"sort"
 	"strings"
@@ -105,4 +107,40 @@ func jsonType(t reflect.Type) string {
 	default:
 		return "string"
 	}
+}
+
+// FromFunc builds a Tool from a typed handler. The args type T is reflected to
+// generate the input JSON Schema and to unmarshal the model's input before
+// calling fn. T should be a struct.
+func FromFunc[T any](name, description string, fn func(ctx context.Context, args T, tctx Context) (Result, error)) Tool {
+	var zero T
+	return &funcTool[T]{
+		name:        name,
+		description: description,
+		schema:      schemaFor(reflect.TypeOf(zero)),
+		fn:          fn,
+	}
+}
+
+type funcTool[T any] struct {
+	name        string
+	description string
+	schema      json.RawMessage
+	fn          func(ctx context.Context, args T, tctx Context) (Result, error)
+}
+
+func (t *funcTool[T]) Name() string           { return t.name }
+func (t *funcTool[T]) Description() string     { return t.description }
+func (t *funcTool[T]) Schema() json.RawMessage { return t.schema }
+
+func (t *funcTool[T]) Execute(ctx context.Context, input json.RawMessage, tctx Context) (Result, error) {
+	var args T
+	if len(input) > 0 {
+		if err := json.Unmarshal(input, &args); err != nil {
+			// Surface as an error Result (not a Go error) so the model can read
+			// the message and retry with corrected arguments.
+			return ErrorResult(fmt.Sprintf("invalid arguments: %v", err)), nil
+		}
+	}
+	return t.fn(ctx, args, tctx)
 }
