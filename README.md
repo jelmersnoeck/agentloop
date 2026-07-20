@@ -102,12 +102,13 @@ The full design lives in
 
 The SDK is built bottom-up as a sequence of independently-shippable milestones:
 
-1. **Foundation** *(done)* — `llm` contracts, mock provider, minimal loop.
-2. **Tools & full loop** — `tool` + builtins + truncation, steering/follow-up queues, hooks,
-   convergence.
-3. **Real providers** — Anthropic + OpenAI, multi-provider router, logical tiers.
-4. **Sub-agents & groups** — observable spawner, fan-out/fan-in orchestration.
-5. **Config & caching** — `AGENTS.md` loading, cross-provider caching.
+1. **Foundation** *(done)* — `llm` contracts, mock provider, minimal `Run` loop.
+2. **Tool framework** — `tool` interface, registry, `FromFunc` schema generation, `tool/truncate`.
+3. **Built-in tools** — `read`, `write`, `edit`, `bash`, `glob`, `grep`.
+4. **Full loop** — tool execution, steering/follow-up queues, hooks, convergence.
+5. **Real providers** — Anthropic + OpenAI, multi-provider router, logical tiers.
+6. **Sub-agents & groups** — observable spawner, fan-out/fan-in orchestration.
+7. **Config & caching** — `AGENTS.md` loading, cross-provider caching.
 
 ## Development
 
