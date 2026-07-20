@@ -129,7 +129,7 @@ type funcTool[T any] struct {
 	fn          func(ctx context.Context, args T, tctx Context) (Result, error)
 }
 
-func (t *funcTool[T]) Name() string           { return t.name }
+func (t *funcTool[T]) Name() string            { return t.name }
 func (t *funcTool[T]) Description() string     { return t.description }
 func (t *funcTool[T]) Schema() json.RawMessage { return t.schema }
 

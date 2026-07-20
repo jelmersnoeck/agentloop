@@ -11,7 +11,7 @@ import (
 // staticTool is a minimal Tool used to check interface satisfaction.
 type staticTool struct{ readOnly bool }
 
-func (staticTool) Name() string           { return "static" }
+func (staticTool) Name() string            { return "static" }
 func (staticTool) Description() string     { return "a static tool" }
 func (staticTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
 func (staticTool) Execute(ctx context.Context, input json.RawMessage, tctx Context) (Result, error) {
@@ -39,7 +39,7 @@ func TestMissingReadOnlyIsMutating(t *testing.T) {
 
 type plainTool struct{}
 
-func (plainTool) Name() string           { return "plain" }
+func (plainTool) Name() string            { return "plain" }
 func (plainTool) Description() string     { return "" }
 func (plainTool) Schema() json.RawMessage { return json.RawMessage(`{}`) }
 func (plainTool) Execute(ctx context.Context, input json.RawMessage, tctx Context) (Result, error) {

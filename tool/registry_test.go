@@ -12,7 +12,7 @@ func namedTool(name string) Tool { return fixedTool{name: name} }
 
 type fixedTool struct{ name string }
 
-func (f fixedTool) Name() string           { return f.name }
+func (f fixedTool) Name() string            { return f.name }
 func (f fixedTool) Description() string     { return "desc of " + f.name }
 func (f fixedTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
 func (f fixedTool) Execute(ctx context.Context, input json.RawMessage, tctx Context) (Result, error) {
