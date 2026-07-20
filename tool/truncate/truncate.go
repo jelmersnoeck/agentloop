@@ -4,7 +4,10 @@
 // reads keep the head, greps cap each line).
 package truncate
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 // Default caps: whichever limit is hit first wins.
 const (
@@ -31,6 +34,7 @@ func Head(s string, maxLines, maxBytes int) (string, bool) {
 
 	if len(out) > maxBytes {
 		out = out[:maxBytes]
+		out = trimTrailingPartialRune(out)
 		truncated = true
 	}
 	return out, truncated
@@ -53,7 +57,34 @@ func Tail(s string, maxLines, maxBytes int) (string, bool) {
 
 	if len(out) > maxBytes {
 		out = out[len(out)-maxBytes:]
+		out = trimLeadingPartialRune(out)
 		truncated = true
 	}
 	return out, truncated
+}
+
+// trimTrailingPartialRune drops an incomplete UTF-8 sequence left at the end of
+// s by a byte-boundary cut, so the result is always valid UTF-8.
+func trimTrailingPartialRune(s string) string {
+	for len(s) > 0 {
+		if r, size := utf8.DecodeLastRuneInString(s); r == utf8.RuneError && size <= 1 {
+			s = s[:len(s)-1]
+			continue
+		}
+		break
+	}
+	return s
+}
+
+// trimLeadingPartialRune drops an incomplete UTF-8 sequence left at the start of
+// s by a byte-boundary cut (used by Tail, which keeps the last bytes).
+func trimLeadingPartialRune(s string) string {
+	for len(s) > 0 {
+		if r, size := utf8.DecodeRuneInString(s); r == utf8.RuneError && size <= 1 {
+			s = s[1:]
+			continue
+		}
+		break
+	}
+	return s
 }

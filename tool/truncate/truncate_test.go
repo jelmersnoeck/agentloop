@@ -3,6 +3,7 @@ package truncate
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestHeadByLines(t *testing.T) {
@@ -49,5 +50,33 @@ func TestTailByBytes(t *testing.T) {
 	out, trunc := Tail(in, 1_000_000, 6)
 	if !trunc || out != "abcdef" {
 		t.Fatalf("Tail byte-cut = %q (trunc=%v), want last 6 bytes", out, trunc)
+	}
+}
+
+func TestHeadByteCutIsRuneSafe(t *testing.T) {
+	in := strings.Repeat("世", 10)        // 3 bytes each, 30 bytes total
+	out, trunc := Head(in, 1_000_000, 8) // 8 bytes = 2 full runes + 2 partial bytes
+	if !trunc {
+		t.Fatal("expected truncated")
+	}
+	if !utf8.ValidString(out) {
+		t.Fatalf("Head produced invalid UTF-8: %q", out)
+	}
+	if out != "世世" {
+		t.Fatalf("Head = %q, want 世世 (partial rune dropped)", out)
+	}
+}
+
+func TestTailByteCutIsRuneSafe(t *testing.T) {
+	in := strings.Repeat("世", 10)
+	out, trunc := Tail(in, 1_000_000, 8)
+	if !trunc {
+		t.Fatal("expected truncated")
+	}
+	if !utf8.ValidString(out) {
+		t.Fatalf("Tail produced invalid UTF-8: %q", out)
+	}
+	if out != "世世" {
+		t.Fatalf("Tail = %q, want 世世 (partial rune dropped)", out)
 	}
 }
